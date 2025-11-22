@@ -228,38 +228,42 @@ export const setupTestAccounts = async (mockWindowEthereum: MockWindowEthereum) 
 	await mintDai(mockWindowEthereum, accountValues)
 }
 
-export function getReversibleTradesHookAddress(salt: bigint) {
-	const bytecode: `0x${ string }` = `0x${ ReversibleTradesHook_ReversibleTradesHook.evm.bytecode.object }`
-	return getContractAddress({ bytecode, from: addressString(PROXY_DEPLOYER_ADDRESS), opcode: 'CREATE2', salt: numberToBytes(salt) })
+const encodeAddress = (manager: Address): `0x${string}` => encodeAbiParameters([{ type: 'address' }],[manager])
+
+export function getReversibleTradesHookAddress(constructorAddress: Address, salt: bigint) {
+	const constructorArgsEncoded: `0x${string}` = encodeAddress(constructorAddress)
+	const bytecodeWithArgs: `0x${string}` = `0x${ReversibleTradesHook_ReversibleTradesHook.evm.bytecode.object}${constructorArgsEncoded.slice(2)}`
+	return getContractAddress({ bytecode: bytecodeWithArgs, from: addressString(PROXY_DEPLOYER_ADDRESS), opcode: 'CREATE2', salt: numberToBytes(salt) })
 }
 
-export const isReversibleTradesHookDeployed = async (client: ReadClient, salt: bigint) => {
-	const expectedDeployedBytecode: `0x${ string }` = `0x${ ReversibleTradesHook_ReversibleTradesHook.evm.deployedBytecode.object }`
-	const address = getReversibleTradesHookAddress(salt)
-	const deployedBytecode = await client.getCode({ address })
-	return deployedBytecode === expectedDeployedBytecode
+export const isReversibleTradesHookDeployed = async (client: ReadClient, constructorAddress: Address, salt: bigint) => {
+	const address = getReversibleTradesHookAddress(constructorAddress, salt)
+	return await client.getCode({ address })
 }
 
-export const deployReversibleTradesHookTransaction = (salt: bigint) => {
-	const bytecode: `0x${ string }` = `0x${salt.toString(16).padStart(64, '0')}${ ReversibleTradesHook_ReversibleTradesHook.evm.bytecode.object }`
-	return { to: addressString(PROXY_DEPLOYER_ADDRESS), data: bytecode } as const
+export const deployReversibleTradesHookTransaction = (constructorAddress: Address, salt: bigint) => {
+	const constructorArgsEncoded: `0x${string}` = encodeAddress(constructorAddress)
+	const bytecodeWithArgs: `0x${string}` = `0x${salt.toString(16).padStart(64, '0')}${ReversibleTradesHook_ReversibleTradesHook.evm.bytecode.object}${constructorArgsEncoded.slice(2)}`
+	return { to: addressString(PROXY_DEPLOYER_ADDRESS), data: bytecodeWithArgs } as const
 }
 
-export const ensureReversibleTradesHookDeployed = async (client: WriteClient, salt: bigint) => {
-	if (await isReversibleTradesHookDeployed(client, salt)) return
-	const hash = await client.sendTransaction(deployReversibleTradesHookTransaction(salt))
+export const ensureReversibleTradesHookDeployed = async (client: WriteClient, constructorAddress: Address, salt: bigint) => {
+	if (await isReversibleTradesHookDeployed(client, constructorAddress, salt)) return
+	const hash = await client.sendTransaction(deployReversibleTradesHookTransaction(constructorAddress, salt))
 	await client.waitForTransactionReceipt({ hash })
 }
 
-const curHookSalt = 294015n
+const curHookSalt = 266435n
 const HOOK_IMPLEMENTATION_CODE = "00C0"
 
-export const checkHookSalt = () => {
-	const routerAddress = getReversibleTradesHookAddress(curHookSalt)
+export const checkHookSalt = ( constructorAddress: Address, guess: bigint) => {
+	const routerAddress = getReversibleTradesHookAddress(constructorAddress, curHookSalt)
 	if (routerAddress.endsWith(HOOK_IMPLEMENTATION_CODE)) return curHookSalt
+	if (getReversibleTradesHookAddress(constructorAddress, guess).endsWith(HOOK_IMPLEMENTATION_CODE)) return guess
 	let salt = 0n
+	console.log('finding hook salt')
 	while (true) {
-		const addressAttempt = getReversibleTradesHookAddress(salt)
+		const addressAttempt = getReversibleTradesHookAddress(constructorAddress, salt)
 		if (addressAttempt.endsWith(HOOK_IMPLEMENTATION_CODE)) {
 			console.log('salt Found', salt, 'addr', addressAttempt)
 			return salt
