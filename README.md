@@ -37,5 +37,4 @@ npm run test
 npm run deploy
 ```
 
-
-![Screenshot of tests](./screenshot.png)
+![Screenshot](./screenshot.png)
