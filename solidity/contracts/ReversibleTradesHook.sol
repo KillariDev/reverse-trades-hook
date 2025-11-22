@@ -93,8 +93,6 @@ contract ReversibleTradesHook {
 		return (this.afterSwap.selector, 0);
 	}
 
-	// todo add stop so liquidity cannot be added and removed all the time
-
 	function getHookPermissions()
 		public
 		pure
@@ -180,23 +178,18 @@ contract ReversibleTradesHook {
 		);
 	}
 	function initiateSwap(PoolKey memory poolKey, bool buyYes, uint128 amountIn, uint128 amountOutMinimum) external {
-		//todo, require adding an incentive for caller
 		swapIndex++;
 		swapOrders[swapIndex].poolKey = poolKey;
 		swapOrders[swapIndex].buyYes = buyYes;
 		swapOrders[swapIndex].amountIn = amountIn;
 		swapOrders[swapIndex].amountOutMinimum = amountOutMinimum;
 		swapOrders[swapIndex].submittedTimestamp = block.timestamp;
-
-		// todo get money in
 	}
 	function executeSwap(uint256 index) external {
-		//todo, add incentive
 		require(block.timestamp + 3600 > swapOrders[index].submittedTimestamp, 'not old enough!');
 		require(index == lastExecutedIndex + 1, 'need to execute in order');
 		require(!stopped, 'stopped!');
 		require(!swapOn, 'already swapping!');
-		//todo, add try catch for failures
 		swapOn = true;
 		swapExactIn(swapOrders[swapIndex].poolKey, swapOrders[swapIndex].buyYes, swapOrders[swapIndex].amountIn, swapOrders[swapIndex].amountOutMinimum);
 		swapOn = false;
@@ -205,8 +198,6 @@ contract ReversibleTradesHook {
 	function stopPool() external {
 		require(msg.sender == manager, 'not a manager');
 		stopped = true;
-
-		//todo return users money
 	}
 
 	function swapExactIn(PoolKey memory poolKey, bool swapYes, uint128 exactAmountIn, uint128 minAmountOut) private {
