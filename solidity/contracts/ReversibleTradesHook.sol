@@ -180,6 +180,7 @@ contract ReversibleTradesHook {
 		);
 	}
 	function initiateSwap(PoolKey memory poolKey, bool buyYes, uint128 amountIn, uint128 amountOutMinimum) external {
+		//todo, require adding an incentive for caller
 		swapIndex++;
 		swapOrders[swapIndex].poolKey = poolKey;
 		swapOrders[swapIndex].buyYes = buyYes;
@@ -191,7 +192,7 @@ contract ReversibleTradesHook {
 	}
 	function executeSwap(uint256 index) external {
 		//todo, add incentive
-		require(swapOrders[index].submittedTimestamp > block.timestamp + 3600, 'not old enough!');
+		require(block.timestamp + 3600 > swapOrders[index].submittedTimestamp, 'not old enough!');
 		require(index == lastExecutedIndex + 1, 'need to execute in order');
 		require(!stopped, 'stopped!');
 		require(!swapOn, 'already swapping!');
