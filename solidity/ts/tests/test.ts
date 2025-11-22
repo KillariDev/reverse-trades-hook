@@ -76,36 +76,58 @@ describe('Contract Test Suite', () => {
 		await ensureReversibleTradesHookDeployed(client, MANAGER, hookSalt)
 		assert.ok(await isReversibleTradesHookDeployed(client, MANAGER, hookSalt), 'not deployed')
 	})
-	test('canDeployPoolAndGetKey', async () => {
+	test('Can add pending swaps and stop the pool', async () => {
 		const client = createWriteClient(mockWindow, TEST_ADDRESSES[0], 0)
+
+		// deploy hook
 		await ensureReversibleTradesHookDeployed(client, MANAGER, hookSalt)
+
+		// deploy pool
 		await deployPool(client, hookSalt, WETH_ADDRESS, DAI_ADDRESS)
 		const poolKey = await getPoolkey(client, hookSalt, WETH_ADDRESS, DAI_ADDRESS)
-		console.log(poolKey)
 
 		const poolIdentifier = await getPoolIdentifier(poolKey)
-		console.log(poolIdentifier)
+
+		//check that liquidity is zero in new pool
 		const liq = await readV4PoolState(client, poolIdentifier)
+		assert.ok(liq.liquidity === 0n, 'liquidity is zero')
+
+		// wrap some eth that we can use for testing
 		await wrapEth(client, 10000n * 10n**18n)
-		console.log(liq)
+
+		// check we have enough weth and dai
 		assert.ok(await getERC20Balance(client, DAI_ADDRESS, client.account.address) > 100n * 10n**18n, 'account has dai')
 		assert.ok(await getERC20Balance(client, WETH_ADDRESS, client.account.address) > 100n * 10n**18n, 'account has weth')
 
+		// add liquidity o the pool
 		await addLiquidity(client, hookSalt, poolKey, 0, 1000, 100n * 10n**18n, 100n * 10n**18n)
 
+		// check we have liquidity
 		const liq2 = await readV4PoolState(client, poolIdentifier)
-		console.log(liq2)
+		assert.ok(liq2.liquidity > liq.liquidity, 'added liquidity')
 
+		// queue swap to the pool
 		await swapExactIn(client, hookSalt, poolKey, true, 1000000n, 0n)
+
+		// we should not be able to execute it right away
 		assert.rejects(executeSwap(client, hookSalt, 1n), 'cannot execute transaction right away')
 		await mockWindow.advanceTime(7200n)
+
+		// add another transaction to pending
 		await swapExactIn(client, hookSalt, poolKey, true, 1000000n, 0n)
+
+		// we should be able to do that now as time has pased
 		await executeSwap(client, hookSalt, 1n)
+
+		// price should change
+		const liq3 = await readV4PoolState(client, poolIdentifier)
+		assert.ok(liq2.sqrtPriceX96 !== liq3.sqrtPriceX96, 'price changed')
+
+		// stop pool
 		await stopPool(client, hookSalt)
 		await mockWindow.advanceTime(7200n)
-		assert.rejects(executeSwap(client, hookSalt, 1n), 'pool should be stopped')
 
-		const liq3 = await readV4PoolState(client, poolIdentifier)
-		console.log(liq3)
+		// we should no longer be able to swap
+		assert.rejects(executeSwap(client, hookSalt, 1n), 'pool should be stopped')
 	})
 })
