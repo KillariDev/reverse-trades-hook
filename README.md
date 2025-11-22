@@ -36,5 +36,3 @@ npm run test
 ```bash
 npm run deploy
 ```
-
-![Screenshot](./screenshot.png)
