@@ -29,6 +29,21 @@ address constant UNIV4_ROUTER = 0x66a9893cC07D91D95644AEDD05D03f95e1dBA8Af;
 contract ReversibleTradesHook {
 	using CurrencyLibrary for uint256;
 
+	struct swapOrder {
+		PoolKey poolKey;
+		bool buyYes;
+		uint128 amountIn;
+		uint128 amountOutMinimum;
+		uint256 submittedTimestamp;
+	}
+	uint256 swapIndex;
+	uint256 lastExecutedIndex;
+	mapping(uint256 => swapOrder) swapOrders;
+
+	address manager;
+	bool swapOn;
+	bool stopped;
+
 	uint24 public constant initialFeePips = 50_000; // 5% fee
 	int24 public constant tickSpacing = 1000; // NOTE: follows general fee -> tickSPacing convention but may need tweaking.
 	uint160 private constant startingPrice = 79228162514264337593543950336; // 1:1 pricing magic number. The startingPrice is expressed as sqrtPriceX96: floor(sqrt(token1 / token0) * 2^96)
@@ -55,7 +70,8 @@ contract ReversibleTradesHook {
 	uint24 public constant DYNAMIC_FEE_FLAG = 0x800000;
 	uint24 public constant OVERRIDE_FEE_FLAG = 0x400000;
 
-	constructor() {
+	constructor(address _manager) {
+		manager = _manager;
 	}
 
 	function beforeSwap(
@@ -63,7 +79,9 @@ contract ReversibleTradesHook {
 		PoolKey calldata,
 		IPoolManager.SwapParams calldata,
 		bytes calldata
-	) external pure returns (bytes4, BeforeSwapDelta, uint24) {
+	) external view returns (bytes4, BeforeSwapDelta, uint24) {
+		require(!stopped, 'contract stopped');
+		require(swapOn, 'not swapping');
 		uint24 fee = initialFeePips | OVERRIDE_FEE_FLAG;
 		return (this.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, fee);
 	}
@@ -72,9 +90,10 @@ contract ReversibleTradesHook {
 		external pure
 		returns (bytes4, int128)
 	{
-		// TODO: If this will adjust fee parameters this needs to validate the sender is PoolManager
 		return (this.afterSwap.selector, 0);
 	}
+
+	// todo add stop so liquidity cannot be added and removed all the time
 
 	function getHookPermissions()
 		public
@@ -131,32 +150,12 @@ contract ReversibleTradesHook {
 		uint128 desiredAmount1
 	) external {
 		PoolId poolId = PoolIdLibrary.toId(poolKey);
-		// 4. Transfer tokens from user to contract
+
+		approveAll(Currency.unwrap(poolKey.currency0));
+		approveAll(Currency.unwrap(poolKey.currency1));
+
 		IERC20(Currency.unwrap(poolKey.currency0)).transferFrom(msg.sender, address(this), desiredAmount0);
 		IERC20(Currency.unwrap(poolKey.currency1)).transferFrom(msg.sender, address(this), desiredAmount1);
-
-		// 5. Approve UNIV4_POSITION_MANAGER
-		IERC20(Currency.unwrap(poolKey.currency0)).approve(UNIV4_POSITION_MANAGER, type(uint256).max);
-		IERC20(Currency.unwrap(poolKey.currency1)).approve(UNIV4_POSITION_MANAGER, type(uint256).max);
-		IERC20(Currency.unwrap(poolKey.currency0)).approve(UNIV4_POOL_MANAGER, type(uint256).max);
-		IERC20(Currency.unwrap(poolKey.currency1)).approve(UNIV4_POOL_MANAGER, type(uint256).max);
-		IERC20(Currency.unwrap(poolKey.currency0)).approve(UNIV4_ROUTER, type(uint256).max);
-		IERC20(Currency.unwrap(poolKey.currency1)).approve(UNIV4_ROUTER, type(uint256).max);
-		IERC20(Currency.unwrap(poolKey.currency0)).approve(PERMIT2, type(uint256).max);
-		IERC20(Currency.unwrap(poolKey.currency1)).approve(PERMIT2, type(uint256).max);
-
-		IAllowanceTransfer(PERMIT2).approve(
-			Currency.unwrap(poolKey.currency0),
-			UNIV4_POSITION_MANAGER,
-			type(uint160).max,
-			uint48(block.timestamp + 1000)
-		);
-		IAllowanceTransfer(PERMIT2).approve(
-			Currency.unwrap(poolKey.currency1),
-			UNIV4_POSITION_MANAGER,
-			type(uint160).max,
-			uint48(block.timestamp + 1000)
-		);
 		uint256 liquidity = getExpectedLiquidityInternal(poolId, tickLower, tickUpper, desiredAmount0, desiredAmount1);
 		// 6. Prepare params for modifyLiquidities
 		bytes[] memory params = new bytes[](2);
@@ -180,5 +179,71 @@ contract ReversibleTradesHook {
 			amount1Max
 		);
 	}
+	function initiateSwap(PoolKey memory poolKey, bool buyYes, uint128 amountIn, uint128 amountOutMinimum) external {
+		swapIndex++;
+		swapOrders[swapIndex].poolKey = poolKey;
+		swapOrders[swapIndex].buyYes = buyYes;
+		swapOrders[swapIndex].amountIn = amountIn;
+		swapOrders[swapIndex].amountOutMinimum = amountOutMinimum;
+		swapOrders[swapIndex].submittedTimestamp = block.timestamp;
 
+		// todo get money in
+	}
+	function executeSwap(uint256 index) external {
+		//todo, add incentive
+		require(swapOrders[index].submittedTimestamp > block.timestamp + 3600, 'not old enough!');
+		require(index == lastExecutedIndex + 1, 'need to execute in order');
+		require(!stopped, 'stopped!');
+		require(!swapOn, 'already swapping!');
+		//todo, add try catch for failures
+		swapOn = true;
+		swapExactIn(swapOrders[swapIndex].poolKey, swapOrders[swapIndex].buyYes, swapOrders[swapIndex].amountIn, swapOrders[swapIndex].amountOutMinimum);
+		swapOn = false;
+	}
+
+	function stopPool() external {
+		require(msg.sender == manager, 'not a manager');
+		stopped = true;
+
+		//todo return users money
+	}
+
+	function swapExactIn(PoolKey memory poolKey, bool swapYes, uint128 exactAmountIn, uint128 minAmountOut) private {
+		approveAll(Currency.unwrap(poolKey.currency0));
+		approveAll(Currency.unwrap(poolKey.currency1));
+
+		address shareTokenIn = Currency.unwrap(swapYes ? poolKey.currency1 : poolKey.currency0);
+		address shareTokenOut = Currency.unwrap(swapYes ? poolKey.currency0 : poolKey.currency1);
+		IERC20(shareTokenIn).transferFrom(msg.sender, address(this), exactAmountIn);
+		performExactInSwapInternal(poolKey, !swapYes, exactAmountIn, minAmountOut, block.timestamp+100);
+		IERC20(shareTokenOut).transfer(msg.sender, IERC20(shareTokenOut).balanceOf(address(this)));
+	}
+
+	function performExactInSwapInternal(PoolKey memory poolKey, bool buyYes, uint128 amountIn, uint128 amountOutMinimum, uint256 deadline) internal {
+		bytes[] memory inputs = new bytes[](1);
+		bytes[] memory params = new bytes[](3);
+
+		params[0] = abi.encode(
+			IV4Router.ExactInputSingleParams({
+				poolKey: poolKey,
+				zeroForOne: buyYes,
+				amountIn: amountIn,
+				amountOutMinimum: amountOutMinimum,
+				hookData: bytes("")
+			})
+		);
+		params[1] = abi.encode(buyYes ? poolKey.currency0 : poolKey.currency1, amountIn);
+		params[2] = abi.encode(buyYes ? poolKey.currency1 : poolKey.currency0, amountOutMinimum);
+		inputs[0] = abi.encode(abi.encodePacked(uint8(Actions.SWAP_EXACT_IN_SINGLE), uint8(Actions.SETTLE_ALL), uint8(Actions.TAKE_ALL)), params);
+		IUniversalRouter(UNIV4_ROUTER).execute(abi.encodePacked(uint8(Commands.V4_SWAP)), inputs, deadline);
+	}
+
+	function approveAll(address a) private {
+		IERC20(a).approve(UNIV4_POSITION_MANAGER, type(uint256).max);
+		IERC20(a).approve(UNIV4_POOL_MANAGER, type(uint256).max);
+		IERC20(a).approve(UNIV4_ROUTER, type(uint256).max);
+		IERC20(a).approve(PERMIT2, type(uint256).max);
+		IAllowanceTransfer(PERMIT2).approve(a, UNIV4_POSITION_MANAGER, type(uint160).max, uint48(block.timestamp + 1000));
+		IAllowanceTransfer(PERMIT2).approve(a, UNIV4_ROUTER, type(uint160).max, uint48(block.timestamp + 1000));
+	}
 }
