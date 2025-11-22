@@ -22,6 +22,9 @@ import { BeforeSwapDelta, BeforeSwapDeltaLibrary } from "./uniswap/types/BeforeS
 import { BalanceDelta } from "./uniswap/types/BalanceDelta.sol";
 
 address constant UNIV4_POOL_MANAGER = 0x000000000004444c5dc75cB358380D2e3dE08A90;
+address constant UNIV4_POSITION_MANAGER = 0xbD216513d74C8cf14cf4747E6AaA6420FF64ee9e;
+address constant PERMIT2 = 0x000000000022D473030F116dDEE9F6B43aC78BA3;
+address constant UNIV4_ROUTER = 0x66a9893cC07D91D95644AEDD05D03f95e1dBA8Af;
 
 contract ReversibleTradesHook {
 	using CurrencyLibrary for uint256;
@@ -120,4 +123,62 @@ contract ReversibleTradesHook {
 
 		IPoolManager(UNIV4_POOL_MANAGER).initialize(pool, startingPrice);
 	}
+	function mintLiquidity(
+		PoolKey memory poolKey,
+		int24 tickLower,
+		int24 tickUpper,
+		uint128 desiredAmount0,
+		uint128 desiredAmount1
+	) external {
+		PoolId poolId = PoolIdLibrary.toId(poolKey);
+		// 4. Transfer tokens from user to contract
+		IERC20(Currency.unwrap(poolKey.currency0)).transferFrom(msg.sender, address(this), desiredAmount0);
+		IERC20(Currency.unwrap(poolKey.currency1)).transferFrom(msg.sender, address(this), desiredAmount1);
+
+		// 5. Approve UNIV4_POSITION_MANAGER
+		IERC20(Currency.unwrap(poolKey.currency0)).approve(UNIV4_POSITION_MANAGER, type(uint256).max);
+		IERC20(Currency.unwrap(poolKey.currency1)).approve(UNIV4_POSITION_MANAGER, type(uint256).max);
+		IERC20(Currency.unwrap(poolKey.currency0)).approve(UNIV4_POOL_MANAGER, type(uint256).max);
+		IERC20(Currency.unwrap(poolKey.currency1)).approve(UNIV4_POOL_MANAGER, type(uint256).max);
+		IERC20(Currency.unwrap(poolKey.currency0)).approve(UNIV4_ROUTER, type(uint256).max);
+		IERC20(Currency.unwrap(poolKey.currency1)).approve(UNIV4_ROUTER, type(uint256).max);
+		IERC20(Currency.unwrap(poolKey.currency0)).approve(PERMIT2, type(uint256).max);
+		IERC20(Currency.unwrap(poolKey.currency1)).approve(PERMIT2, type(uint256).max);
+
+		IAllowanceTransfer(PERMIT2).approve(
+			Currency.unwrap(poolKey.currency0),
+			UNIV4_POSITION_MANAGER,
+			type(uint160).max,
+			uint48(block.timestamp + 1000)
+		);
+		IAllowanceTransfer(PERMIT2).approve(
+			Currency.unwrap(poolKey.currency1),
+			UNIV4_POSITION_MANAGER,
+			type(uint160).max,
+			uint48(block.timestamp + 1000)
+		);
+		uint256 liquidity = getExpectedLiquidityInternal(poolId, tickLower, tickUpper, desiredAmount0, desiredAmount1);
+		// 6. Prepare params for modifyLiquidities
+		bytes[] memory params = new bytes[](2);
+		params[0] = abi.encode(poolKey, tickLower, tickUpper, liquidity, desiredAmount0, desiredAmount1, msg.sender, "");
+		params[1] = abi.encode(poolKey.currency0, poolKey.currency1);
+
+		// 7. Mint the liquidity position
+		IPositionManager(UNIV4_POSITION_MANAGER).modifyLiquidities(
+			abi.encode(abi.encodePacked(uint8(Actions.MINT_POSITION), uint8(Actions.SETTLE_PAIR)), params),
+			block.timestamp + 1000
+		);
+	}
+
+	function getExpectedLiquidityInternal(PoolId poolId, int24 tickLower, int24 tickUpper, uint128 amount0Max, uint128 amount1Max) internal view returns (uint256) {
+		(uint160 sqrtPriceX96,,,) = StateLibrary.getSlot0(IPoolManager(UNIV4_POOL_MANAGER), poolId);
+		return LiquidityAmounts.getLiquidityForAmounts(
+			sqrtPriceX96,
+			TickMath.getSqrtPriceAtTick(tickLower),
+			TickMath.getSqrtPriceAtTick(tickUpper),
+			amount0Max,
+			amount1Max
+		);
+	}
+
 }

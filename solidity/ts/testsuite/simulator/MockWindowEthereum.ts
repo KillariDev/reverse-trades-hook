@@ -186,7 +186,7 @@ export const getMockedEthSimulateWindowEthereum = (): MockWindowEthereum => {
 				default: {
 					console.log('unknown RPC call:')
 					console.log(args)
-					throw new ErrorEvent(`unknown method: ${ args.method }`)
+					throw new Error(`unknown method: ${ args.method }`)
 				}
 			}
 		},
