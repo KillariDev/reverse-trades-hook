@@ -44,6 +44,10 @@ contract ReversibleTradesHook {
 	bool swapOn;
 	bool stopped;
 
+	event PoolStopped();
+	event SwapExecuted();
+	event SwapInitiated();
+
 	uint24 public constant initialFeePips = 50_000; // 5% fee
 	int24 public constant tickSpacing = 1000; // NOTE: follows general fee -> tickSPacing convention but may need tweaking.
 	uint160 private constant startingPrice = 79228162514264337593543950336; // 1:1 pricing magic number. The startingPrice is expressed as sqrtPriceX96: floor(sqrt(token1 / token0) * 2^96)
@@ -178,26 +182,31 @@ contract ReversibleTradesHook {
 		);
 	}
 	function initiateSwap(PoolKey memory poolKey, bool buyYes, uint128 amountIn, uint128 amountOutMinimum) external {
+		require(!stopped, 'stopped!');
 		swapIndex++;
 		swapOrders[swapIndex].poolKey = poolKey;
 		swapOrders[swapIndex].buyYes = buyYes;
 		swapOrders[swapIndex].amountIn = amountIn;
 		swapOrders[swapIndex].amountOutMinimum = amountOutMinimum;
 		swapOrders[swapIndex].submittedTimestamp = block.timestamp;
+		emit SwapInitiated();
 	}
 	function executeSwap(uint256 index) external {
-		require(block.timestamp + 3600 > swapOrders[index].submittedTimestamp, 'not old enough!');
+		require(swapOrders[index].submittedTimestamp > 0, 'no swap there!');
+		require(block.timestamp > swapOrders[index].submittedTimestamp + 3600, 'not old enough!');
 		require(index == lastExecutedIndex + 1, 'need to execute in order');
 		require(!stopped, 'stopped!');
 		require(!swapOn, 'already swapping!');
 		swapOn = true;
 		swapExactIn(swapOrders[swapIndex].poolKey, swapOrders[swapIndex].buyYes, swapOrders[swapIndex].amountIn, swapOrders[swapIndex].amountOutMinimum);
 		swapOn = false;
+		emit SwapExecuted();
 	}
 
 	function stopPool() external {
 		require(msg.sender == manager, 'not a manager');
 		stopped = true;
+		emit PoolStopped();
 	}
 
 	function swapExactIn(PoolKey memory poolKey, bool swapYes, uint128 exactAmountIn, uint128 minAmountOut) private {

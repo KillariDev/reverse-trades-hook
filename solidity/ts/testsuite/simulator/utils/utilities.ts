@@ -256,10 +256,10 @@ export const ensureReversibleTradesHookDeployed = async (client: WriteClient, co
 const curHookSalt = 266435n
 const HOOK_IMPLEMENTATION_CODE = "00C0"
 
-export const checkHookSalt = ( constructorAddress: Address, guess: bigint) => {
+export const checkHookSalt = ( constructorAddress: Address, guess?: bigint) => {
 	const routerAddress = getReversibleTradesHookAddress(constructorAddress, curHookSalt)
 	if (routerAddress.endsWith(HOOK_IMPLEMENTATION_CODE)) return curHookSalt
-	if (getReversibleTradesHookAddress(constructorAddress, guess).endsWith(HOOK_IMPLEMENTATION_CODE)) return guess
+	if (guess !== undefined && getReversibleTradesHookAddress(constructorAddress, guess).endsWith(HOOK_IMPLEMENTATION_CODE)) return guess
 	let salt = 0n
 	console.log('finding hook salt')
 	while (true) {

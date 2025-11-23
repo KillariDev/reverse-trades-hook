@@ -8,12 +8,12 @@ import { createTransactionExplainer } from '../testsuite/simulator/utils/transac
 import { Deployment } from '../testsuite/simulator/utils/logExplaining.js'
 import { addressString } from '../testsuite/simulator/utils/bigint.js'
 import { ERC20_ERC20, ReversibleTradesHook_ReversibleTradesHook, uniswap_interfaces_IPoolManager_IPoolManager, uniswap_libraries_Position_Position } from '../types/contractArtifact.js'
-import { STATE_VIEW_ABI, UNIV4_ROUTER_ABI } from './abi.js'
+import { PERMIT2_ABI, STATE_VIEW_ABI, UNIV4_ROUTER_ABI, WETH_ABI } from './abi.js'
 import assert from 'node:assert'
 
 const MANAGER = addressString(TEST_ADDRESSES[0])
 
-const hookSalt = checkHookSalt(MANAGER, 156219n)
+const hookSalt = checkHookSalt(MANAGER, 51852n)
 const getDeployments = (): Deployment[] => {
 	return [{
 		abi: ReversibleTradesHook_ReversibleTradesHook.abi,
@@ -44,11 +44,11 @@ const getDeployments = (): Deployment[] => {
 		deploymentName: 'DAI',
 		address: DAI_ADDRESS
 	}, {
-		abi: ERC20_ERC20.abi,
+		abi: WETH_ABI,
 		deploymentName: 'Weth',
 		address: WETH_ADDRESS
 	}, {
-		abi: undefined,
+		abi: PERMIT2_ABI,
 		deploymentName: 'Permit2',
 		address: '0x000000000022D473030F116dDEE9F6B43aC78BA3',
 	}]
@@ -110,7 +110,7 @@ describe('Contract Test Suite', () => {
 		await swapExactIn(client, hookSalt, poolKey, true, 1000000n, 0n)
 
 		// we should not be able to execute it right away
-		assert.rejects(executeSwap(client, hookSalt, 1n), 'cannot execute transaction right away')
+		await assert.rejects(executeSwap(client, hookSalt, 1n), 'cannot execute transaction right away')
 		await mockWindow.advanceTime(7200n)
 
 		// add another transaction to pending
@@ -128,6 +128,6 @@ describe('Contract Test Suite', () => {
 		await mockWindow.advanceTime(7200n)
 
 		// we should no longer be able to swap
-		assert.rejects(executeSwap(client, hookSalt, 1n), 'pool should be stopped')
+		await assert.rejects(executeSwap(client, hookSalt, 1n), 'pool should be stopped')
 	})
 })
