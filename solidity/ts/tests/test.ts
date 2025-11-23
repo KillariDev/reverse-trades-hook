@@ -129,5 +129,7 @@ describe('Contract Test Suite', () => {
 
 		// we should no longer be able to swap
 		await assert.rejects(executeSwap(client, hookSalt, 1n), 'pool should be stopped')
+		await assert.rejects(executeSwap(client, hookSalt, 2n), 'pool should be stopped')
+		await assert.rejects(executeSwap(client, hookSalt, 3n), 'pool should be stopped')
 	})
 })
